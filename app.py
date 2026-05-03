@@ -11,7 +11,7 @@ from src.config import get_settings
 from src.embeddings import LocalEmbedder
 from src.pdf_loader import load_pdf
 from src.rag import RAGPipeline
-from src.vector_store import PineconeStore
+from src.vector_store import LocalVectorStore
 
 
 st.set_page_config(page_title="Document Q&A (RAG)", page_icon="📄", layout="wide")
@@ -21,14 +21,9 @@ st.set_page_config(page_title="Document Q&A (RAG)", page_icon="📄", layout="wi
 def init_backend():
     settings = get_settings()
     embedder = LocalEmbedder(model_name=settings.embedding_model)
-    # Trust the model's actual dimension over the .env value (avoids mismatches).
-    embedding_dim = embedder.dimension
-    store = PineconeStore(
-        api_key=settings.pinecone_api_key,
-        index_name=settings.pinecone_index,
-        dimension=embedding_dim,
-        cloud=settings.pinecone_cloud,
-        region=settings.pinecone_region,
+    store = LocalVectorStore(
+        persist_dir=settings.chroma_dir,
+        collection_base=settings.collection_base,
     )
     pipeline = RAGPipeline(
         embedder=embedder,
@@ -43,7 +38,7 @@ def init_backend():
 
 
 def reset_session():
-    """Drop the current Pinecone namespace and clear UI state."""
+    """Drop the current Chroma collection and clear UI state."""
     if "namespace" in st.session_state:
         try:
             _, _, store = init_backend()
@@ -55,7 +50,7 @@ def reset_session():
 
 def main() -> None:
     st.title("📄 Document Q&A")
-    st.caption("RAG over your PDFs — powered by OpenRouter, sentence-transformers, and Pinecone.")
+    st.caption("RAG over your PDFs — powered by OpenRouter, sentence-transformers, and a local ChromaDB.")
 
     try:
         settings, pipeline, _ = init_backend()
@@ -64,7 +59,7 @@ def main() -> None:
         st.stop()
 
     if "namespace" not in st.session_state:
-        # One Pinecone namespace per user session keeps documents isolated.
+        # One Chroma collection per user session keeps documents isolated.
         st.session_state["namespace"] = f"session-{uuid.uuid4().hex[:12]}"
     if "ingested_docs" not in st.session_state:
         st.session_state["ingested_docs"] = []
@@ -75,7 +70,7 @@ def main() -> None:
         st.subheader("Settings")
         st.text(f"Model: {settings.openrouter_model}")
         st.text(f"Embeddings: {settings.embedding_model}")
-        st.text(f"Index: {settings.pinecone_index}")
+        st.text(f"Store: ChromaDB ({settings.chroma_dir})")
         st.text(f"Top-K: {settings.top_k}")
         st.divider()
         if st.button("🧹 Clear session & documents", use_container_width=True):

@@ -21,18 +21,16 @@ def _require(name: str) -> str:
 
 @dataclass(frozen=True)
 class Settings:
-    openrouter_api_key: str = ""
-    pinecone_api_key: str = ''
+    openrouter_api_key: str
 
-    pinecone_index: str = os.getenv("PINECONE_INDEX", "doc-qa-rag")
-    pinecone_cloud: str = os.getenv("PINECONE_CLOUD", "aws")
-    pinecone_region: str = os.getenv("PINECONE_REGION", "us-east-1")
+    # Where Chroma persists its SQLite + vectors on disk.
+    chroma_dir: str = os.getenv("CHROMA_DIR", "./chroma_data")
+    collection_base: str = os.getenv("CHROMA_COLLECTION", "doc-qa")
 
     # Local sentence-transformers model. all-MiniLM-L6-v2 -> 384-dim.
     embedding_model: str = os.getenv(
         "EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2"
     )
-    embedding_dim: int = int(os.getenv("EMBEDDING_DIM", "384"))
 
     # OpenRouter model slug. Default is a strong free model.
     openrouter_model: str = os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-chat-v3.1:free")
@@ -47,7 +45,4 @@ class Settings:
 
 
 def get_settings() -> Settings:
-    return Settings(
-        openrouter_api_key=_require("OPENROUTER_API_KEY"),
-        pinecone_api_key=_require("PINECONE_API_KEY"),
-    )
+    return Settings(openrouter_api_key=_require("OPENROUTER_API_KEY"))

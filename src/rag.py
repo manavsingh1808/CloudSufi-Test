@@ -7,7 +7,7 @@ from typing import List, Optional
 from openai import OpenAI
 
 from .embeddings import LocalEmbedder
-from .vector_store import PineconeStore
+from .vector_store import LocalVectorStore
 
 
 SYSTEM_PROMPT = """You are a careful research assistant answering questions strictly using the provided document excerpts.
@@ -39,7 +39,7 @@ class RAGPipeline:
     def __init__(
         self,
         embedder: LocalEmbedder,
-        store: PineconeStore,
+        store: LocalVectorStore,
         openrouter_api_key: str,
         model: str,
         top_k: int = 5,

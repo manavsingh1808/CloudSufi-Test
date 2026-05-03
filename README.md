@@ -10,9 +10,12 @@ Built with:
 | ------------ | ------------------------------------------------------------ |
 | LLM          | **OpenRouter** (default `deepseek/deepseek-chat-v3.1:free`)  |
 | Embeddings   | **sentence-transformers** `all-MiniLM-L6-v2` (local, 384-dim)|
-| Vector store | **Pinecone** (serverless, auto-created)                      |
+| Vector store | **ChromaDB** (local, persistent SQLite + DuckDB on disk)     |
 | UI           | **Streamlit**                                                |
 | PDF parsing  | `pypdf` + LangChain `RecursiveCharacterTextSplitter`         |
+
+> **No external infra required.** Everything except the LLM call runs on your machine.
+> Only one API key is needed (OpenRouter — has a free tier).
 
 ---
 
@@ -31,9 +34,9 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-# 3. Add your API keys
+# 3. Add your API key
 cp .env.example .env        # Windows: copy .env.example .env
-# then edit .env and paste your keys
+# then edit .env and paste your OpenRouter key
 
 # 4. Run!
 streamlit run app.py
@@ -41,22 +44,20 @@ streamlit run app.py
 
 The app opens at <http://localhost:8501>. Upload up to 3 PDFs, click **Ingest**, then ask away.
 
-> **Note:** The first ingest downloads the embedding model (~80 MB) into a local cache.
-> Subsequent runs are instant.
+> **First-run notes:**
+> - The embedding model (~80 MB) downloads into your HuggingFace cache on the first ingest.
+> - ChromaDB creates a local folder `./chroma_data/` (SQLite + index files). It's safe to
+>   delete that folder anytime to start fresh.
 
 ---
 
 ## 🔑 What you need
 
-Only **two** API keys — both have free tiers:
+Just **one** API key — has a free tier:
 
-1. **OpenRouter** — <https://openrouter.ai/keys> (free models available, no card needed)
-2. **Pinecone** — <https://app.pinecone.io/> (free serverless tier is plenty)
+- **OpenRouter** — <https://openrouter.ai/keys> (free models available, no card needed)
 
-Embeddings run **locally** with `sentence-transformers`, so no embedding key is needed.
-
-Drop both keys into `.env` (see `.env.example`). The Pinecone index is **created automatically**
-on first run — no manual setup.
+Embeddings and the vector store run **locally** — no Pinecone, no embedding API key.
 
 ### Picking a different OpenRouter model
 
@@ -78,13 +79,13 @@ For better quality (paid):
 
 ```
    ┌──────────────┐    ┌──────────────┐   ┌────────────────────┐   ┌──────────────┐
-   │  PDF upload  │───▶│  Chunk text  │──▶│ MiniLM embed (CPU) │──▶│  Pinecone    │
-   └──────────────┘    │ (page-aware) │   │   (384-dim, local) │   │  (upsert)    │
+   │  PDF upload  │───▶│  Chunk text  │──▶│ MiniLM embed (CPU) │──▶│   ChromaDB   │
+   └──────────────┘    │ (page-aware) │   │   (384-dim, local) │   │ (local disk) │
                        └──────────────┘   └────────────────────┘   └──────┬───────┘
                                                                           │
    ┌──────────────┐    ┌──────────────┐   ┌────────────────────┐          │
-   │  User asks   │───▶│ MiniLM embed │──▶│  Pinecone top-K    │◀─────────┘
-   │  question    │    │  (query)     │   │  query             │
+   │  User asks   │───▶│ MiniLM embed │──▶│  Chroma top-K      │◀─────────┘
+   │  question    │    │  (query)     │   │  (cosine)          │
    └──────────────┘    └──────────────┘   └─────────┬──────────┘
                                                     │
                                                     ▼
@@ -107,13 +108,13 @@ For better quality (paid):
 2. **Chunking** (`src/chunker.py`) — `RecursiveCharacterTextSplitter` with `chunk_size=900`
    and `overlap=150`. Each chunk keeps `doc_name`, `page_number`, and a snippet in metadata.
 3. **Embeddings** (`src/embeddings.py`) — local `sentence-transformers/all-MiniLM-L6-v2`,
-   normalized to unit length so cosine similarity behaves well in Pinecone.
+   normalized to unit length so cosine similarity behaves well.
    No API key needed; the model is cached after the first run.
-4. **Vector store** (`src/vector_store.py`) — Pinecone serverless, cosine similarity.
-   Each browser session gets its own **namespace** (`session-<uuid>`) so different users
-   don't see each other's documents.
+4. **Vector store** (`src/vector_store.py`) — `chromadb.PersistentClient` writes vectors,
+   metadata, and snippets into `./chroma_data/`. Each browser session gets its own
+   **collection** (`doc-qa--session-<uuid>`) so different sessions stay isolated.
 5. **Retrieval + generation** (`src/rag.py`) — embed the question, fetch top-K chunks
-   from Pinecone, build a numbered-context prompt, and call **OpenRouter** through the
+   from Chroma, build a numbered-context prompt, and call **OpenRouter** through the
    OpenAI SDK (`base_url="https://openrouter.ai/api/v1"`) with a strict
    "only use these excerpts and cite inline" system prompt.
 6. **UI** (`app.py`) — Streamlit page for upload → ingest → chat, with an expandable
@@ -132,8 +133,9 @@ doc-qa-rag/
 │   ├── pdf_loader.py       # PDF → per-page text
 │   ├── chunker.py          # text → overlapping chunks
 │   ├── embeddings.py       # local sentence-transformers wrapper
-│   ├── vector_store.py     # Pinecone wrapper (auto-create index)
+│   ├── vector_store.py     # local ChromaDB wrapper
 │   └── rag.py              # retrieval + OpenRouter prompting
+├── chroma_data/            # auto-created on first run; safe to delete
 ├── .streamlit/config.toml  # UI theme / server defaults
 ├── requirements.txt
 ├── .env.example
@@ -152,17 +154,16 @@ doc-qa-rag/
   which usually makes the section obvious.
 - **MiniLM is small.** `all-MiniLM-L6-v2` is fast and free but less semantically rich
   than larger embedding models. For higher-quality retrieval, swap in
-  `BAAI/bge-base-en-v1.5` (~440 MB, 768-dim) by setting `EMBEDDING_MODEL` in `.env`
-  (no other code change needed — the app auto-detects the dimension).
+  `BAAI/bge-base-en-v1.5` (~440 MB, 768-dim) by setting `EMBEDDING_MODEL` in `.env`.
+  If you change the embedding model, **delete `chroma_data/`** first so the new model's
+  vectors don't collide with the old ones.
 - **Free OpenRouter models have rate limits** — typically a few requests per minute.
   If you hit a 429, wait a moment and retry, or switch to a paid model.
-- **Pinecone serverless cold start.** First query after a long idle period can take a
-  couple of seconds while the index spins up.
-- **No persistence between sessions.** Each browser session uses its own namespace and
-  the **Clear** button wipes it. Re-uploading the same PDF will re-embed it.
-- **Pinecone index dimension is fixed at creation.** If you switch embedding models to
-  one with a different dimension, delete the old Pinecone index first (or change
-  `PINECONE_INDEX` to a new name) — the app will auto-create a fresh one.
+- **Local store is single-process.** ChromaDB's `PersistentClient` is fine for
+  Streamlit's single-process dev server, but isn't designed for multi-process or
+  multi-user concurrent writes. For that, point Chroma at its server mode or move to
+  Qdrant/Pinecone/etc.
+- **Re-uploading the same file re-embeds it.** No content hashing yet.
 
 ---
 
@@ -179,8 +180,6 @@ doc-qa-rag/
 - **Streaming responses** from OpenRouter for snappier UX.
 - **Eval harness** — a small set of (question, expected-source) pairs and a script that
   measures retrieval recall@k and answer faithfulness.
-- **Auth + multi-user persistence** — today, namespaces are per-session and ephemeral.
-  A real deployment would tie namespaces to authenticated users.
 - **Dockerfile + `docker compose up`** for an even simpler one-command run.
 
 ---
@@ -194,5 +193,5 @@ doc-qa-rag/
 - Tweak `CHUNK_SIZE`, `CHUNK_OVERLAP`, and `TOP_K` in `.env` to trade off precision vs.
   context. Smaller chunks + higher `top_k` works better for specific facts; larger
   chunks help for summarisation-style questions.
-- If a free model gives weak answers, try a different one — DeepSeek and Llama 3.3 70B
-  often differ noticeably on the same question.
+- To completely reset everything: stop Streamlit, delete the `chroma_data/` folder,
+  restart.
