@@ -8,7 +8,7 @@ Built with:
 
 | Layer        | Choice                                                       |
 | ------------ | ------------------------------------------------------------ |
-| LLM          | **OpenRouter** (default `deepseek/deepseek-chat-v3.1:free`)  |
+| LLM          | **OpenRouter** (default `google/gemma-4-31b-it:free`)  |
 | Embeddings   | **sentence-transformers** `all-MiniLM-L6-v2` (local, 384-dim)|
 | Vector store | **ChromaDB** (local, persistent SQLite + DuckDB on disk)     |
 | UI           | **Streamlit**                                                |
