@@ -8,7 +8,7 @@ import streamlit as st
 
 from src.chunker import chunk_pages
 from src.config import get_settings
-from src.embeddings import VoyageEmbedder
+from src.embeddings import LocalEmbedder
 from src.pdf_loader import load_pdf
 from src.rag import RAGPipeline
 from src.vector_store import PineconeStore
@@ -17,23 +17,27 @@ from src.vector_store import PineconeStore
 st.set_page_config(page_title="Document Q&A (RAG)", page_icon="📄", layout="wide")
 
 
-@st.cache_resource(show_spinner=False)
+@st.cache_resource(show_spinner="Loading embedding model (first run downloads ~80MB)...")
 def init_backend():
     settings = get_settings()
-    embedder = VoyageEmbedder(api_key=settings.voyage_api_key, model=settings.embedding_model)
+    embedder = LocalEmbedder(model_name=settings.embedding_model)
+    # Trust the model's actual dimension over the .env value (avoids mismatches).
+    embedding_dim = embedder.dimension
     store = PineconeStore(
         api_key=settings.pinecone_api_key,
         index_name=settings.pinecone_index,
-        dimension=settings.embedding_dim,
+        dimension=embedding_dim,
         cloud=settings.pinecone_cloud,
         region=settings.pinecone_region,
     )
     pipeline = RAGPipeline(
         embedder=embedder,
         store=store,
-        anthropic_api_key=settings.anthropic_api_key,
-        claude_model=settings.claude_model,
+        openrouter_api_key=settings.openrouter_api_key,
+        model=settings.openrouter_model,
         top_k=settings.top_k,
+        site_url=settings.site_url,
+        site_title=settings.site_title,
     )
     return settings, pipeline, store
 
@@ -51,7 +55,7 @@ def reset_session():
 
 def main() -> None:
     st.title("📄 Document Q&A")
-    st.caption("RAG over your PDFs — powered by Claude, Voyage AI, and Pinecone.")
+    st.caption("RAG over your PDFs — powered by OpenRouter, sentence-transformers, and Pinecone.")
 
     try:
         settings, pipeline, _ = init_backend()
@@ -69,7 +73,7 @@ def main() -> None:
 
     with st.sidebar:
         st.subheader("Settings")
-        st.text(f"Model: {settings.claude_model}")
+        st.text(f"Model: {settings.openrouter_model}")
         st.text(f"Embeddings: {settings.embedding_model}")
         st.text(f"Index: {settings.pinecone_index}")
         st.text(f"Top-K: {settings.top_k}")
@@ -120,8 +124,13 @@ def main() -> None:
 
     if ask:
         with st.spinner("Thinking…"):
-            result = pipeline.ask(question, namespace=st.session_state["namespace"])
-        st.session_state["history"].insert(0, {"q": question, "result": result})
+            try:
+                result = pipeline.ask(question, namespace=st.session_state["namespace"])
+            except Exception as exc:
+                st.error(f"Error from LLM: {exc}")
+                result = None
+        if result is not None:
+            st.session_state["history"].insert(0, {"q": question, "result": result})
 
     for item in st.session_state["history"]:
         st.markdown(f"**Q:** {item['q']}")

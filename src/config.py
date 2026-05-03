@@ -21,19 +21,25 @@ def _require(name: str) -> str:
 
 @dataclass(frozen=True)
 class Settings:
-    anthropic_api_key: str
-    voyage_api_key: str
-    pinecone_api_key: str
+    openrouter_api_key: str = ""
+    pinecone_api_key: str = ''
 
     pinecone_index: str = os.getenv("PINECONE_INDEX", "doc-qa-rag")
     pinecone_cloud: str = os.getenv("PINECONE_CLOUD", "aws")
     pinecone_region: str = os.getenv("PINECONE_REGION", "us-east-1")
 
-    # Voyage AI's `voyage-3` produces 1024-dim embeddings.
-    embedding_model: str = os.getenv("EMBEDDING_MODEL", "voyage-3")
-    embedding_dim: int = int(os.getenv("EMBEDDING_DIM", "1024"))
+    # Local sentence-transformers model. all-MiniLM-L6-v2 -> 384-dim.
+    embedding_model: str = os.getenv(
+        "EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2"
+    )
+    embedding_dim: int = int(os.getenv("EMBEDDING_DIM", "384"))
 
-    claude_model: str = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-5")
+    # OpenRouter model slug. Default is a strong free model.
+    openrouter_model: str = os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-chat-v3.1:free")
+
+    # Optional: shown to OpenRouter for analytics / per-app rate limits.
+    site_url: str = os.getenv("OPENROUTER_SITE_URL", "http://localhost:8501")
+    site_title: str = os.getenv("OPENROUTER_SITE_TITLE", "Doc Q&A RAG")
 
     chunk_size: int = int(os.getenv("CHUNK_SIZE", "900"))
     chunk_overlap: int = int(os.getenv("CHUNK_OVERLAP", "150"))
@@ -42,7 +48,6 @@ class Settings:
 
 def get_settings() -> Settings:
     return Settings(
-        anthropic_api_key=_require("ANTHROPIC_API_KEY"),
-        voyage_api_key=_require("VOYAGE_API_KEY"),
+        openrouter_api_key=_require("OPENROUTER_API_KEY"),
         pinecone_api_key=_require("PINECONE_API_KEY"),
     )

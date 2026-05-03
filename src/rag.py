@@ -1,12 +1,12 @@
-"""RAG orchestration: retrieve relevant chunks then ask Claude with citations."""
+"""RAG orchestration: retrieve relevant chunks then ask an OpenRouter model with citations."""
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List
+from typing import List, Optional
 
-from anthropic import Anthropic
+from openai import OpenAI
 
-from .embeddings import VoyageEmbedder
+from .embeddings import LocalEmbedder
 from .vector_store import PineconeStore
 
 
@@ -38,17 +38,30 @@ class RAGAnswer:
 class RAGPipeline:
     def __init__(
         self,
-        embedder: VoyageEmbedder,
+        embedder: LocalEmbedder,
         store: PineconeStore,
-        anthropic_api_key: str,
-        claude_model: str,
+        openrouter_api_key: str,
+        model: str,
         top_k: int = 5,
+        site_url: Optional[str] = None,
+        site_title: Optional[str] = None,
     ):
         self.embedder = embedder
         self.store = store
-        self.client = Anthropic(api_key=anthropic_api_key)
-        self.model = claude_model
+        self.model = model
         self.top_k = top_k
+
+        # OpenRouter is OpenAI-API compatible.
+        self.client = OpenAI(
+            api_key=openrouter_api_key,
+            base_url="https://openrouter.ai/api/v1",
+        )
+        # Optional headers OpenRouter uses for analytics / per-app rate limits.
+        self._extra_headers = {}
+        if site_url:
+            self._extra_headers["HTTP-Referer"] = site_url
+        if site_title:
+            self._extra_headers["X-Title"] = site_title
 
     def ask(self, question: str, namespace: str) -> RAGAnswer:
         query_vec = self.embedder.embed_query(question)
@@ -84,16 +97,15 @@ class RAGPipeline:
             "Answer using only the excerpts above and cite sources inline like [1], [2]."
         )
 
-        response = self.client.messages.create(
+        completion = self.client.chat.completions.create(
             model=self.model,
             max_tokens=1024,
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_message}],
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_message},
+            ],
+            extra_headers=self._extra_headers or None,
         )
 
-        # Anthropic returns a list of content blocks; concatenate any text blocks.
-        answer_text = "".join(
-            block.text for block in response.content if getattr(block, "type", "") == "text"
-        ).strip()
-
+        answer_text = (completion.choices[0].message.content or "").strip()
         return RAGAnswer(answer=answer_text, citations=citations)
